@@ -7,6 +7,7 @@ function M.setup(opts)
 
 	M.langs = opts.langs and opts.langs or {}
 	M.load_paths = opts.load_paths and opts.load_paths or {}
+	M.extra_evals = opts.extra_evals and opts.extra_evals or {}
 
 	M._here = vim.fn.fnamemodify(debug.getinfo(1).source:sub(2), ":p:h")
 	M._run_by_name = M._here .. "/run_by_name.el"
@@ -44,6 +45,10 @@ function M.setup(opts)
 			return acc .. "(" .. value .. " . t) "
 		end, "") .. "))",
 	})
+
+	for _, expr in ipairs(M.extra_evals) do
+		vim.list_extend(M._base_cmd, { "--eval", expr })
+	end
 end
 
 local named_blocks_query = vim.treesitter.query.parse(
@@ -90,8 +95,9 @@ function M.get_names_in_buffer(bufnr, line1, line2)
 		local name
 
 		for id, node in pairs(match) do
-			local row1, col1, row2, col2 = node:range()
-			local text = vim.api.nvim_buf_get_text(bufnr, row1, col1, row2, col2, {})[1]
+			-- Neovim 0.12+ wraps captured nodes in a table: { [1] = TSNode }
+			local tsnode = type(node) == "table" and node[1] or node
+			local row1, col1, row2, col2 = tsnode:range()
 
 			if named_blocks_query.captures[id] == "block" and not passed then
 				if single and line1 - 1 > row1 and line1 - 1 < row2 then
@@ -102,7 +108,7 @@ function M.get_names_in_buffer(bufnr, line1, line2)
 			end
 
 			if named_blocks_query.captures[id] == "name" then
-				name = text
+				name = vim.api.nvim_buf_get_text(bufnr, row1, col1, row2, col2, {})[1]
 			end
 		end
 
@@ -131,7 +137,9 @@ function M.get_blocks_in_buffer(bufnr, line1, line2)
 		local passed = not range
 
 		for id, node in pairs(match) do
-			local row1, _, row2 = node:range()
+			-- Neovim 0.12+ wraps captured nodes in a table: { [1] = TSNode }
+			local tsnode = type(node) == "table" and node[1] or node
+			local row1, _, row2 = tsnode:range()
 
 			if unnamed_blocks_query.captures[id] == "block" and not passed then
 				if single and line1 - 1 > row1 and line1 - 1 < row2 then
@@ -203,7 +211,7 @@ vim.api.nvim_create_user_command("OrgExecute", function(el)
 		script = M._run_by_number
 
 		if #blocks > 1 then
-			vim.notify("Bailing on multiple blocks with single line range ?? (Report upstream)", vim.log.level.ERROR)
+			vim.notify("Bailing on multiple blocks with single line range ?? (Report upstream)", vim.log.levels.ERROR)
 
 			return
 		end
@@ -308,7 +316,7 @@ vim.api.nvim_create_user_command("OrgTangle", function(el)
 		local named_blocks = M.get_names_in_buffer(0, line1, line2)
 
 		if #blocks > 1 then
-			vim.notify("Bailing on multiple blocks with single line range ?? (Report upstream)", vim.log.levinitOR)
+			vim.notify("Bailing on multiple blocks with single line range ?? (Report upstream)", vim.log.levels.ERROR)
 
 			return
 		end
