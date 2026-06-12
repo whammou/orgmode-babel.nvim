@@ -159,6 +159,26 @@ function M.get_blocks_in_buffer(bufnr, line1, line2)
 	return indexes
 end
 
+--- Find the source block under the cursor.
+--- Reuses existing treesitter queries with cursor-line range.
+--- @param bufnr? integer (defaults to current buffer)
+--- @return { name: string|nil, index: integer }|nil
+function M.get_block_at_cursor(bufnr)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+
+	local blocks = M.get_blocks_in_buffer(bufnr, cursor_line, cursor_line)
+	if #blocks == 0 then
+		return nil
+	end
+
+	local names = M.get_names_in_buffer(bufnr, cursor_line, cursor_line)
+	return {
+		index = blocks[1],
+		name = #names > 0 and names[1] or nil,
+	}
+end
+
 vim.api.nvim_create_user_command("OrgExecute", function(el)
 	local line1 = el.line1
 	local line2 = el.line2
@@ -175,16 +195,53 @@ vim.api.nvim_create_user_command("OrgExecute", function(el)
 	local script = M._run_all
 	local parameters = {}
 
-	local blocks = M.get_blocks_in_buffer(0, line1, line2)
-	local named_blocks = M.get_names_in_buffer(0, line1, line2)
+	-- When no arg and no explicit range, execute block under cursor
+	if arg == "" and range == 0 then
+		local at_cursor = M.get_block_at_cursor(bufnr)
+		if not at_cursor then
+			return vim.notify("No blocks", vim.log.levels.INFO)
+		end
 
-	if #blocks <= 0 then
-		vim.notify("No blocks", vim.log.levels.INFO)
-		return
-	end
+		if at_cursor.name then
+			if el.bang then
+				vim.notify("Evaulating code block (" .. at_cursor.name .. ") on your system", vim.log.levels.INFO)
+			elseif
+				vim.fn.input({
+					prompt = "Evaulate code block (" .. at_cursor.name .. ") on your system? (y/N) ",
+					cancelreturn = "n",
+				}) ~= "y"
+			then
+				return
+			end
 
-	if arg ~= "" then
-		if not vim.list_contains(named_blocks, arg) then
+			script = M._run_by_name
+			parameters = { at_cursor.name }
+		else
+			if el.bang then
+				vim.notify("Evaulating this code block on your system", vim.log.levels.INFO)
+			elseif
+				vim.fn.input({
+					prompt = "Evaulate this code block on your system? (y/N) ",
+					cancelreturn = "n",
+				}) ~= "y"
+			then
+				return
+			end
+
+			script = M._run_by_number
+			parameters = { at_cursor.index }
+		end
+	else
+		local blocks = M.get_blocks_in_buffer(0, line1, line2)
+		local named_blocks = M.get_names_in_buffer(0, line1, line2)
+
+		if #blocks <= 0 then
+			vim.notify("No blocks", vim.log.levels.INFO)
+			return
+		end
+
+		if arg ~= "" then
+			if not vim.list_contains(named_blocks, arg) then
 			return vim.notify("Block not found (" .. arg .. ")", vim.log.levels.ERROR)
 		end
 
@@ -257,6 +314,7 @@ vim.api.nvim_create_user_command("OrgExecute", function(el)
 		end
 
 		parameters = blocks
+		end
 	end
 
 	local cmd = vim.deepcopy(M._base_cmd)
@@ -298,20 +356,41 @@ vim.api.nvim_create_user_command("OrgTangle", function(el)
 	local script = M._tangle_all
 	local parameters = {}
 
-	local blocks = M.get_blocks_in_buffer(0, line1, line2)
+	-- When no explicit range, tangle block under cursor
+	if range == 0 then
+		local at_cursor = M.get_block_at_cursor(bufnr)
+		if not at_cursor then
+			return vim.notify("No blocks", vim.log.levels.INFO)
+		end
 
-	if #blocks <= 0 then
-		vim.notify("No blocks", vim.log.levels.INFO)
-		return
-	end
-
-	if line1 == 1 and line2 == total_lines then
 		if el.bang then
-			vim.notify("Tangling whole file", vim.log.levels.INFO)
-		elseif vim.fn.input({ prompt = "Tangle whole file? (y/N) ", cancelreturn = "n" }) ~= "y" then
+			vim.notify("Tangling this code block on your system", vim.log.levels.INFO)
+		elseif
+			vim.fn.input({
+				prompt = "Tangle this code block on your system? (y/N) ",
+				cancelreturn = "n",
+			}) ~= "y"
+		then
 			return
 		end
-	elseif range == 1 then
+
+		script = M._tangle_by_number
+		parameters = { at_cursor.index }
+	else
+		local blocks = M.get_blocks_in_buffer(0, line1, line2)
+
+		if #blocks <= 0 then
+			vim.notify("No blocks", vim.log.levels.INFO)
+			return
+		end
+
+		if line1 == 1 and line2 == total_lines then
+			if el.bang then
+				vim.notify("Tangling whole file", vim.log.levels.INFO)
+			elseif vim.fn.input({ prompt = "Tangle whole file? (y/N) ", cancelreturn = "n" }) ~= "y" then
+				return
+			end
+		elseif range == 1 then
 		script = M._tangle_by_number
 		local named_blocks = M.get_names_in_buffer(0, line1, line2)
 
@@ -359,6 +438,7 @@ vim.api.nvim_create_user_command("OrgTangle", function(el)
 		end
 
 		parameters = blocks
+		end
 	end
 
 	local cmd = vim.deepcopy(M._base_cmd)
